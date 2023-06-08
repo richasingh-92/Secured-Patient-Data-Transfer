@@ -1,0 +1,257 @@
+import hashlib
+import json
+import time
+from flask import Flask, jsonify, request, redirect, render_template, session
+from datetime import datetime
+import uuid
+
+# Flask App
+app = Flask(__name__)
+app.secret_key = 'super secret key'
+app.config['SESSION_TYPE'] = 'filesystem'
+
+# Blockchain Class
+class Blockchain:
+    def __init__(self):
+        self.chain = []
+        self.current_transactions = []
+
+        # Create the genesis block
+        self.new_block(previous_hash='1', proof=100)
+
+    def new_block(self, proof, previous_hash=None):
+        block = {
+            'index': len(self.chain) + 1,
+            'timestamp': time.time(),
+            'transactions': self.current_transactions,
+            'proof': proof,
+            'previous_hash': previous_hash or self.hash(self.chain[-1]),
+        }
+
+        self.current_transactions = []
+        self.chain.append(block)
+        return block
+    
+    def get_transaction_ids(self, recipient):
+        transaction_ids = []
+        for block in self.chain:
+            for transaction in block['transactions']:
+                if transaction['recipient'] == recipient:
+                    transaction_ids.append(transaction['data'])
+        return transaction_ids
+
+    def new_transaction(self, sender, recipient, data):
+        self.current_transactions.append({
+            'sender': sender,
+            'recipient': recipient,
+            'data': data,
+        })
+
+        return self.last_block['index'] + 1
+
+    @staticmethod
+    def hash(block):
+        block_string = json.dumps(block, sort_keys=True).encode()
+        return hashlib.sha256(block_string).hexdigest()
+
+    @property
+    def last_block(self):
+        return self.chain[-1]
+
+    def proof_of_work(self, last_proof):
+        proof = 0
+        while self.valid_proof(last_proof, proof) is False:
+            proof += 1
+
+        return proof
+
+    @staticmethod
+    def valid_proof(last_proof, proof):
+        guess = f'{last_proof}{proof}'.encode()
+        guess_hash = hashlib.sha256(guess).hexdigest()
+        return guess_hash[:4] == "0000"
+
+
+# Create the blockchain
+blockchain = Blockchain()
+
+
+# Routes
+@app.route('/')
+def index():
+    return render_template('register.html')
+
+
+@app.route('/mine', methods=['GET'])
+def mine():
+    last_block = blockchain.last_block
+    last_proof = last_block['proof']
+    proof = blockchain.proof_of_work(last_proof)
+
+    # Reward for mining
+    blockchain.new_transaction(
+        sender="0",
+        recipient="patient",
+        data="Transaction ID: XYZ123"  # Replace with your logic to generate a unique transaction ID
+    )
+
+    # Add the new block to the chain
+    previous_hash = blockchain.hash(last_block)
+    block = blockchain.new_block(proof, previous_hash)
+    print("Block")
+    print(block)
+    response = {
+        'message': 'New block created',
+        'index': block['index'],
+        'timestamp': block['timestamp'],
+        'transactions': block['transactions'],
+        'proof': block['proof'],
+        'previous_hash': block['previous_hash'],
+    }
+
+    return jsonify(response), 200
+
+
+@app.route('/transactions/new', methods=['POST'])
+def new_transaction():
+    values = request.get_json()
+
+    required_fields = ['sender', 'recipient', 'data']
+    if not all(field in values for field in required_fields):
+        return 'Missing fields', 400
+
+    index = blockchain.new_transaction(values['sender'], values['recipient'], values['data'])
+
+    response = {'message': f'Transaction will be added to Block {index}'}
+    return jsonify(response), 201
+
+
+@app.route('/chain', methods=['GET'])
+def full_chain():
+    response = {
+        'chain': blockchain.chain,
+        'length': len(blockchain.chain),
+    }
+    return jsonify(response), 200
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        # Store the user details in JSON file
+        user_data = {
+            'username': username,
+            'password': password
+        }
+
+        # Save the user details to a file (e.g., users.json)
+        with open('users.json', 'a') as file:
+            file.write(json.dumps(user_data) + '\n')
+
+        return redirect('/login')
+    else:
+        return render_template('register.html')
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        # Verify user credentials by checking the stored user details
+        with open('users.json', 'r') as file:
+            for line in file:
+                user_data = json.loads(line)
+                if user_data['username'] == username and user_data['password'] == password:
+                    session['username'] = username
+                    return redirect('/dashboard')
+
+        return 'Invalid credentials'
+    else:
+        return render_template('login.html')
+
+
+@app.route('/dashboard')
+def dashboard():
+    if 'username' not in session:
+        return redirect('/login')
+
+    transaction_ids = blockchain.get_transaction_ids(session['username'])
+    print("IDs: ", transaction_ids)
+
+    # Retrieve transaction IDs for the logged-in user
+    with open('blockchain.json', 'r') as file:
+        blockchain_data = json.load(file)
+        for block in blockchain_data:
+            for transaction in block['transactions']:
+                if transaction['recipient'] == session['username']:
+                    transaction_ids.append(transaction['data'])
+
+    return render_template('dashboard.html', transaction_ids=transaction_ids)
+
+
+@app.route('/push_report', methods=['GET', 'POST'])
+def push_report():
+    if request.method == 'POST':
+        if 'username' not in session:
+            return redirect('/login')
+
+        username = session['username']
+        hospital = request.form['hospital']
+
+        # Generate a transaction ID (Replace with your logic to generate a unique transaction ID)
+        transaction_id = str(uuid.uuid1())
+        # print(transaction_id)
+
+        # Push the report to the blockchain
+        blockchain.new_transaction(
+            sender=username,
+            recipient=hospital,
+            data=transaction_id
+        )
+        print("chain")
+        print(blockchain.chain)
+
+        # Save the blockchain to a file (e.g., blockchain.json)
+        with open('blockchain.json', 'w') as file:
+            file.write(json.dumps(blockchain.chain)+'\n')
+
+            # json.dump(blockchain.chain, file, indent=4)
+
+        return redirect('/dashboard')
+    else:
+        return render_template('push_report.html')
+
+
+@app.route('/access_report', methods=['GET', 'POST'])
+def access_report():
+    if request.method == 'POST':
+        if 'username' not in session:
+            return redirect('/login')
+
+        transaction_id = request.form['transaction_id']
+
+        # Retrieve the report from the blockchain using the transaction ID
+        report = None
+        with open('blockchain.json', 'r') as file:
+            blockchain_data = json.load(file)
+            for block in blockchain_data:
+                for transaction in block['transactions']:
+                    if transaction['data'] == transaction_id:
+                        report = transaction['data']
+                        break
+
+        if report:
+            return f'Report: {report}'
+        else:
+            return 'Report not found'
+    else:
+        return render_template('access_report.html')
+
+
+# Run the app
+if __name__ == '__main__':
+    app.run(debug=True)

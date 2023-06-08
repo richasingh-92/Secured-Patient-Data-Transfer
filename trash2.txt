@@ -1,0 +1,9 @@
+[
+    {
+        "index": 1,
+        "timestamp": 1684909149.5457401,
+        "transactions": [],
+        "proof": 100,
+        "previous_hash": "1"
+    }
+]
